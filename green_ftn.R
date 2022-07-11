@@ -4,9 +4,7 @@ library(tidyquant)
 library(timetk)
 library(slider)
 library(tidymodels)
-library(jsonlite)
-# dat_list <- readRDS("sim_dat.RDS")
-# walk(names(dat_list), ~assign(.x, value = dat_list[[.x]], envir = .GlobalEnv))
+dat_list <- readRDS("sim_dat.RDS")
 
 # 0. 포트폴리오 시뮬레이션 함수 ----
 # 포트폴리오 동일가중 수익률 계산
@@ -75,6 +73,100 @@ get_rtn_cum <- function(dat, rtn_var) {
   dat %>% 
     mutate(rtn_cum = cumprod({{rtn_var}} + 1) - 1) %>% 
     select(td, rtn = {{rtn_var}}, rtn_cum)
+}
+
+# 0.2. 포트폴리오 시각화 함수 ----
+get_plot_dat <- function(port_return, bm_return = green_rtn) {
+  start_date <- max(min(port_return$td), min(bm_return$td))
+  end_date <- min(max(port_return$td), max(bm_return$td))
+  
+  port_return <- port_return %>% filter(td >= start_date, td <= end_date)
+  bm_return <- bm_return %>% filter(td >= start_date, td <= end_date)
+  
+  dat <- bind_rows(
+    get_rtn_cum(port_return, rtn_with_cost) %>% mutate(type = "port"),
+    get_rtn_cum(bm_return, rtn) %>% mutate(type = "bm")
+  )
+  
+  return(dat)
+}
+
+plot_cum_return <- function(dat) {
+  
+  g1 <- dat %>% 
+    mutate(text = str_glue("{td} : {scales::percent(rtn, accuracy = 0.01)}
+                           type = {type}")) %>% 
+    ggplot(aes(td, rtn_cum, color = type, label =  text)) +
+    geom_line() +
+    theme_tq() +
+    scale_color_tq() +
+    scale_y_continuous(labels = scales::percent_format()) + 
+    labs(x = "", y = "") + 
+    theme(legend.position = "none")
+
+
+  return(ggplotly(g1, tooltip = "label"))
+}
+
+plot_monthly_return <- function(dat) {
+  # 월별 수익률
+  dat2 <- dat %>% 
+    mutate(yearmon = as.yearmon(td)) %>% 
+    group_by(type, yearmon) %>% 
+    summarise(rtn = prod(rtn + 1) -1) %>% 
+    ungroup()
+  
+  dat2 <- dat2 %>% 
+    pivot_wider(names_from = type, values_from = rtn) %>% 
+    mutate(rtn = port - bm) %>% 
+    select(yearmon, rtn) %>% 
+    mutate(type = "diff")
+  
+  
+  g2 <- dat2 %>% 
+    mutate(text = str_glue("{yearmon} : {scales::percent(rtn, 0.01)}")) %>% 
+    ggplot(aes(yearmon, rtn, fill = type, text = text)) +
+    geom_col(position = "dodge") + 
+    scale_fill_tq() + 
+    theme_tq() +
+    scale_y_continuous(labels = scales::percent_format()) + 
+    labs(x = "", y = "") + 
+    theme(legend.position = "none")
+  
+  return(ggplotly(g2, tooltip = "text"))
+}
+
+plot_weight_ts <- function(port_weight) {
+  g <- port_weight %>% 
+    group_by(td, theme) %>% 
+    summarise(theme_weight = sum(weight)) %>% 
+    ungroup() %>% 
+    mutate(weight = str_glue("{td}
+                                 {theme} : {percent(theme_weight, accuracy = .01)}")) %>% 
+    ggplot(aes(td, theme_weight, fill = theme, label = weight)) + 
+    geom_area() + 
+    scale_fill_tq() +
+    scale_y_continuous(labels = scales::percent_format(accuracy = 0.01)) +
+    theme_tq() +
+    theme(legend.position = "right") + 
+    labs(x = "", y = "")
+  ggplotly(g, tooltip = "label")
+}
+
+plot_weight_pie <- function(port_weight, target_td){
+  port_weight_filtered <- port_weight %>% 
+    filter(td == target_td) %>% 
+    group_by(theme) %>% 
+    summarise(weight = sum(weight)) %>% 
+    ungroup()
+  
+  fig <- plot_ly(port_weight_filtered, labels = ~theme, values = ~weight, type = "pie",
+                 textposition = "inside", 
+                 textinfo = "label+percent",
+                 hoverinfo = "label+percent",
+                 showlegend = FALSE)
+  
+  return(fig)
 }
 
 
